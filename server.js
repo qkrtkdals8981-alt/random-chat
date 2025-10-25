@@ -4,12 +4,48 @@ const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 const fs = require('fs');
 const path = require('path');
+const multer = require('multer');
 
 // 관리자 비밀번호
 const ADMIN_PASSWORD = 'admin1234';
 
 // 데이터 파일 경로
 const DATA_FILE = path.join(__dirname, 'posts-data.json');
+
+// 업로드 폴더 생성
+const uploadDir = path.join(__dirname, 'public', 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// 파일 업로드 설정
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname);
+    cb(null, uniqueName);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|mp4|webm|mov/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    
+    if (extname && mimetype) {
+      cb(null, true);
+    } else {
+      cb(new Error('이미지 또는 동영상 파일만 업로드 가능합니다.'));
+    }
+  }
+});
 
 // 미들웨어
 app.use(express.static('public'));
@@ -26,11 +62,11 @@ let stats = {
   totalMatches: 0
 };
 
-// 게시판 데이터 (파일에서 로드)
+// 게시판 데이터
 let posts = [];
 let postIdCounter = 1;
 
-// 데이터 로드 함수
+// 데이터 로드
 function loadData() {
   try {
     if (fs.existsSync(DATA_FILE)) {
@@ -49,7 +85,7 @@ function loadData() {
   }
 }
 
-// 데이터 저장 함수
+// 데이터 저장
 function saveData() {
   try {
     const data = {
@@ -57,74 +93,67 @@ function saveData() {
       postIdCounter: postIdCounter
     };
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-    console.log('💾 데이터 저장 완료');
   } catch (error) {
     console.error('❌ 데이터 저장 실패:', error);
   }
 }
 
-// 서버 시작 시 데이터 로드
 loadData();
 
-// ============ 게시판 API ============
+// ============ 파일 업로드 API ============
+app.post('/api/upload', upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: '파일이 없습니다.' });
+    }
+    
+    const fileUrl = `/uploads/${req.file.filename}`;
+    const fileType = req.file.mimetype.startsWith('video') ? 'video' : 'image';
+    
+    res.json({
+      success: true,
+      url: fileUrl,
+      type: fileType,
+      filename: req.file.filename
+    });
+  } catch (error) {
+    console.error('파일 업로드 오류:', error);
+    res.status(500).json({ success: false, error: '파일 업로드 실패' });
+  }
+});
 
-// 게시글 목록 조회
+// ============ 게시판 API ============
 app.get('/api/posts', (req, res) => {
   try {
     const sortedPosts = [...posts].sort((a, b) => b.createdAt - a.createdAt);
-    // 비밀번호는 제외하고 전송
     const safePosts = sortedPosts.map(p => {
       const { password, ...rest } = p;
       return rest;
     });
     res.json(safePosts);
   } catch (error) {
-    console.error('게시글 목록 조회 오류:', error);
-    res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+    res.status(500).json({ error: '서버 오류' });
   }
 });
 
-// 게시글 작성
 app.post('/api/posts', (req, res) => {
   try {
-    console.log('게시글 작성 요청:', req.body);
-    
     const { title, content, author, password } = req.body;
     
     if (!title || !content || !author || !password) {
-      return res.status(400).json({ 
-        success: false,
-        error: '모든 필드를 입력해주세요.' 
-      });
+      return res.status(400).json({ success: false, error: '모든 필드를 입력해주세요.' });
     }
     
     if (password.length < 4) {
-      return res.status(400).json({ 
-        success: false,
-        error: '비밀번호는 4자 이상이어야 합니다.' 
-      });
-    }
-    
-    if (title.length > 100) {
-      return res.status(400).json({ 
-        success: false,
-        error: '제목은 100자 이하로 입력해주세요.' 
-      });
-    }
-    
-    if (content.length > 2000) {
-      return res.status(400).json({ 
-        success: false,
-        error: '내용은 2000자 이하로 입력해주세요.' 
-      });
+      return res.status(400).json({ success: false, error: '비밀번호는 4자 이상이어야 합니다.' });
     }
     
     const post = {
       id: postIdCounter++,
-      title: title,
-      content: content,
-      author: author,
-      password: password, // 저장하지만 클라이언트에는 안 보냄
+      title,
+      content,
+      author,
+      password,
       views: 0,
       likes: 0,
       createdAt: Date.now(),
@@ -132,21 +161,15 @@ app.post('/api/posts', (req, res) => {
     };
     
     posts.push(post);
-    saveData(); // 파일에 저장
-    console.log('게시글 작성 완료:', post.id);
+    saveData();
     
     const { password: _, ...safePost } = post;
     res.json({ success: true, post: safePost });
   } catch (error) {
-    console.error('게시글 작성 오류:', error);
-    res.status(500).json({ 
-      success: false,
-      error: '서버 오류가 발생했습니다.' 
-    });
+    res.status(500).json({ success: false, error: '서버 오류' });
   }
 });
 
-// 게시글 상세 조회
 app.get('/api/posts/:id', (req, res) => {
   try {
     const postId = parseInt(req.params.id);
@@ -156,20 +179,16 @@ app.get('/api/posts/:id', (req, res) => {
       return res.status(404).json({ error: '게시글을 찾을 수 없습니다.' });
     }
     
-    // 조회수 증가
     post.views += 1;
     saveData();
     
-    // 비밀번호 제외하고 전송
     const { password, ...safePost } = post;
     res.json(safePost);
   } catch (error) {
-    console.error('게시글 조회 오류:', error);
-    res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+    res.status(500).json({ error: '서버 오류' });
   }
 });
 
-// 댓글 작성
 app.post('/api/posts/:id/comments', (req, res) => {
   try {
     const postId = parseInt(req.params.id);
@@ -182,32 +201,24 @@ app.post('/api/posts/:id/comments', (req, res) => {
     const { content, author, password } = req.body;
     
     if (!content || !author || !password) {
-      return res.status(400).json({ 
-        success: false,
-        error: '모든 필드를 입력해주세요.' 
-      });
+      return res.status(400).json({ success: false, error: '모든 필드를 입력해주세요.' });
     }
     
     if (password.length < 4) {
-      return res.status(400).json({ 
-        success: false,
-        error: '비밀번호는 4자 이상이어야 합니다.' 
-      });
+      return res.status(400).json({ success: false, error: '비밀번호는 4자 이상이어야 합니다.' });
     }
     
     const comment = {
       id: Date.now(),
-      author: author,
-      content: content,
-      password: password,
+      author,
+      content,
+      password,
       createdAt: Date.now()
     };
     
     post.comments.push(comment);
     saveData();
-    console.log('댓글 작성 완료:', comment.id);
     
-    // 비밀번호 제외하고 전송
     const safePost = {
       ...post,
       comments: post.comments.map(c => {
@@ -219,15 +230,10 @@ app.post('/api/posts/:id/comments', (req, res) => {
     
     res.json({ success: true, post: safePost });
   } catch (error) {
-    console.error('댓글 작성 오류:', error);
-    res.status(500).json({ 
-      success: false,
-      error: '서버 오류가 발생했습니다.' 
-    });
+    res.status(500).json({ success: false, error: '서버 오류' });
   }
 });
 
-// 좋아요
 app.post('/api/posts/:id/like', (req, res) => {
   try {
     const postId = parseInt(req.params.id);
@@ -242,12 +248,10 @@ app.post('/api/posts/:id/like', (req, res) => {
     
     res.json({ success: true, likes: post.likes });
   } catch (error) {
-    console.error('좋아요 오류:', error);
-    res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+    res.status(500).json({ error: '서버 오류' });
   }
 });
 
-// 게시글 삭제 (작성자 비밀번호 또는 관리자 비밀번호)
 app.delete('/api/posts/:id', (req, res) => {
   try {
     const postId = parseInt(req.params.id);
@@ -256,37 +260,24 @@ app.delete('/api/posts/:id', (req, res) => {
     const index = posts.findIndex(p => p.id === postId);
     
     if (index === -1) {
-      return res.status(404).json({ 
-        success: false,
-        error: '게시글을 찾을 수 없습니다.' 
-      });
+      return res.status(404).json({ success: false, error: '게시글을 찾을 수 없습니다.' });
     }
     
     const post = posts[index];
     
-    // 관리자 비밀번호 또는 작성자 비밀번호 확인
     if (password !== ADMIN_PASSWORD && password !== post.password) {
-      return res.status(403).json({ 
-        success: false,
-        error: '비밀번호가 올바르지 않습니다.' 
-      });
+      return res.status(403).json({ success: false, error: '비밀번호가 올바르지 않습니다.' });
     }
     
-    const deletedPost = posts.splice(index, 1)[0];
+    posts.splice(index, 1);
     saveData();
-    console.log('게시글 삭제됨:', deletedPost.id);
     
     res.json({ success: true, message: '게시글이 삭제되었습니다.' });
   } catch (error) {
-    console.error('게시글 삭제 오류:', error);
-    res.status(500).json({ 
-      success: false,
-      error: '서버 오류가 발생했습니다.' 
-    });
+    res.status(500).json({ success: false, error: '서버 오류' });
   }
 });
 
-// 댓글 삭제 (작성자 비밀번호 또는 관리자 비밀번호)
 app.delete('/api/posts/:postId/comments/:commentId', (req, res) => {
   try {
     const postId = parseInt(req.params.postId);
@@ -296,36 +287,24 @@ app.delete('/api/posts/:postId/comments/:commentId', (req, res) => {
     const post = posts.find(p => p.id === postId);
     
     if (!post) {
-      return res.status(404).json({ 
-        success: false,
-        error: '게시글을 찾을 수 없습니다.' 
-      });
+      return res.status(404).json({ success: false, error: '게시글을 찾을 수 없습니다.' });
     }
     
     const commentIndex = post.comments.findIndex(c => c.id === commentId);
     
     if (commentIndex === -1) {
-      return res.status(404).json({ 
-        success: false,
-        error: '댓글을 찾을 수 없습니다.' 
-      });
+      return res.status(404).json({ success: false, error: '댓글을 찾을 수 없습니다.' });
     }
     
     const comment = post.comments[commentIndex];
     
-    // 관리자 비밀번호 또는 작성자 비밀번호 확인
     if (password !== ADMIN_PASSWORD && password !== comment.password) {
-      return res.status(403).json({ 
-        success: false,
-        error: '비밀번호가 올바르지 않습니다.' 
-      });
+      return res.status(403).json({ success: false, error: '비밀번호가 올바르지 않습니다.' });
     }
     
-    const deletedComment = post.comments.splice(commentIndex, 1)[0];
+    post.comments.splice(commentIndex, 1);
     saveData();
-    console.log('댓글 삭제됨:', deletedComment.id);
     
-    // 비밀번호 제외하고 전송
     const safePost = {
       ...post,
       comments: post.comments.map(c => {
@@ -337,20 +316,15 @@ app.delete('/api/posts/:postId/comments/:commentId', (req, res) => {
     
     res.json({ success: true, message: '댓글이 삭제되었습니다.', post: safePost });
   } catch (error) {
-    console.error('댓글 삭제 오류:', error);
-    res.status(500).json({ 
-      success: false,
-      error: '서버 오류가 발생했습니다.' 
-    });
+    res.status(500).json({ success: false, error: '서버 오류' });
   }
 });
 
-// ============ 소켓 통신 (채팅) ============
-
+// ============ 소켓 (채팅) ============
 io.on('connection', (socket) => {
   stats.totalConnections++;
   stats.activeUsers++;
-  console.log(`새 접속: ${socket.id} (활성 사용자: ${stats.activeUsers})`);
+  console.log(`새 접속: ${socket.id} (활성: ${stats.activeUsers})`);
 
   socket.emit('stats', stats);
   io.emit('stats', stats);
@@ -373,12 +347,11 @@ io.on('connection', (socket) => {
       socket.emit('matched', { roomId, partnerId: partner.id });
       partner.emit('matched', { roomId, partnerId: socket.id });
       
-      console.log(`매칭 성공: ${socket.id} ↔ ${partner.id}`);
+      console.log(`매칭: ${socket.id} ↔ ${partner.id}`);
       io.emit('stats', stats);
     } else {
       waitingUsers.push(socket);
       socket.emit('waiting');
-      console.log(`대기 중: ${socket.id}`);
     }
   });
 
@@ -387,6 +360,8 @@ io.on('connection', (socket) => {
     if (room && room.roomId) {
       io.to(room.partnerId).emit('message', {
         text: data.text,
+        imageUrl: data.imageUrl,
+        imageType: data.imageType,
         timestamp: Date.now()
       });
     }
@@ -407,13 +382,11 @@ io.on('connection', (socket) => {
     }
     userBlocks.get(socket.id).add(blockedUserId);
     
-    console.log(`차단: ${socket.id} blocked ${blockedUserId}`);
     leaveCurrentRoom(socket);
   });
 
   socket.on('disconnect', () => {
     stats.activeUsers--;
-    console.log(`연결 끊김: ${socket.id} (활성 사용자: ${stats.activeUsers})`);
     
     waitingUsers = waitingUsers.filter(user => user.id !== socket.id);
     
@@ -449,7 +422,8 @@ http.listen(PORT, () => {
 ║   URL: http://localhost:${PORT}    ║
 ╚════════════════════════════════════╝
   `);
-  console.log('게시판 API 준비 완료!');
+  console.log('✅ 게시판 API 준비 완료');
   console.log(`⚠️  관리자 비밀번호: ${ADMIN_PASSWORD}`);
-  console.log(`📂 데이터 파일: ${DATA_FILE}`);
+  console.log(`📂 데이터: ${DATA_FILE}`);
+  console.log(`📁 업로드: ${uploadDir}`);
 });

@@ -369,14 +369,6 @@
             <label>내용</label>
             <textarea id="postContent" placeholder="내용 입력" required maxlength="2000"></textarea>
           </div>
-          <div class="form-group">
-            <label>이미지/동영상 (선택)</label>
-            <label class="image-upload-btn" for="postFileInput">📷 파일 선택</label>
-            <input type="file" id="postFileInput" accept="image/*,video/*" style="display:none">
-            <img id="postImagePreview" class="image-preview">
-            <video id="postVideoPreview" class="image-preview" controls></video>
-            <div class="form-help">최대 10MB, 이미지 또는 동영상</div>
-          </div>
           <button type="submit" class="submit-btn">등록하기</button>
         </form>
       </div>
@@ -395,61 +387,8 @@
     </div>
   </div>
 
-  <div id="imageModal" class="image-modal">
-    <button class="image-modal-close" onclick="closeImageModal()">닫기</button>
-    <div id="imageModalContent"></div>
-  </div>
-
   <script>
     let currentPostId = null;
-    let uploadedFileUrl = null;
-    let uploadedFileType = null;
-
-    document.getElementById('postFileInput').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      
-      if (file.size > 10 * 1024 * 1024) {
-        alert('파일 크기는 10MB 이하만 가능합니다.');
-        e.target.value = '';
-        return;
-      }
-      
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      try {
-        const response = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData
-        });
-        
-        const result = await response.json();
-        
-        if (result.success) {
-          uploadedFileUrl = result.url;
-          uploadedFileType = result.type;
-          
-          const imgPreview = document.getElementById('postImagePreview');
-          const videoPreview = document.getElementById('postVideoPreview');
-          
-          if (result.type === 'video') {
-            videoPreview.src = result.url;
-            videoPreview.style.display = 'block';
-            imgPreview.style.display = 'none';
-          } else {
-            imgPreview.src = result.url;
-            imgPreview.style.display = 'block';
-            videoPreview.style.display = 'none';
-          }
-        } else {
-          alert(result.error || '업로드 실패');
-        }
-      } catch (error) {
-        alert('업로드 중 오류 발생: ' + error.message);
-        console.error(error);
-      }
-    });
 
     async function loadPosts() {
       try {
@@ -465,7 +404,7 @@
         
         postsList.innerHTML = posts.map(post => `
           <div class="post-item" onclick="viewPost(${post.id})">
-            <div class="post-title">${post.imageUrl ? '📷 ' : ''}${escapeHtml(post.title)}</div>
+            <div class="post-title">${escapeHtml(post.title)}</div>
             <div class="post-meta">
               <span>✍️ ${escapeHtml(post.author)}</span>
               <span>👁️ ${post.views}</span>
@@ -490,11 +429,6 @@
       document.getElementById('postPassword').value = '';
       document.getElementById('postTitle').value = '';
       document.getElementById('postContent').value = '';
-      document.getElementById('postFileInput').value = '';
-      document.getElementById('postImagePreview').style.display = 'none';
-      document.getElementById('postVideoPreview').style.display = 'none';
-      uploadedFileUrl = null;
-      uploadedFileType = null;
     }
 
     async function submitPost(e) {
@@ -514,14 +448,7 @@
         const response = await fetch('/api/posts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            author, 
-            password, 
-            title, 
-            content,
-            imageUrl: uploadedFileUrl,
-            imageType: uploadedFileType
-          })
+          body: JSON.stringify({ author, password, title, content })
         });
         
         const result = await response.json();
@@ -550,15 +477,6 @@
           return;
         }
         
-        let mediaHtml = '';
-        if (post.imageUrl) {
-          if (post.imageType === 'video') {
-            mediaHtml = `<video src="${post.imageUrl}" class="post-video" controls onclick="showImageModal('${post.imageUrl}', 'video')"></video>`;
-          } else {
-            mediaHtml = `<img src="${post.imageUrl}" class="post-image" onclick="showImageModal('${post.imageUrl}', 'image')">`;
-          }
-        }
-        
         const detailHtml = `
           <div class="post-detail-title">${escapeHtml(post.title)}</div>
           <div class="post-detail-meta">
@@ -567,7 +485,6 @@
             <span>❤️ ${post.likes}</span>
             <span>🕐 ${formatDate(post.createdAt)}</span>
           </div>
-          ${mediaHtml}
           <div class="post-detail-content">${escapeHtml(post.content)}</div>
           <div class="post-actions">
             <button class="action-btn" onclick="likePost(${post.id})">❤️ 좋아요 (${post.likes})</button>
@@ -576,25 +493,14 @@
           <div class="comments-section">
             <div class="comments-title">💬 댓글 ${post.comments.length}개</div>
             <div>
-              ${post.comments.map(c => {
-                let commentMediaHtml = '';
-                if (c.imageUrl) {
-                  if (c.imageType === 'video') {
-                    commentMediaHtml = `<video src="${c.imageUrl}" class="comment-video" controls onclick="showImageModal('${c.imageUrl}', 'video')"></video>`;
-                  } else {
-                    commentMediaHtml = `<img src="${c.imageUrl}" class="comment-image" onclick="showImageModal('${c.imageUrl}', 'image')">`;
-                  }
-                }
-                return `
-                  <div class="comment-item">
-                    <button class="comment-delete-btn" onclick="deleteComment(${post.id}, ${c.id}, event)">삭제</button>
-                    <div class="comment-author">${escapeHtml(c.author)}</div>
-                    <div class="comment-content">${escapeHtml(c.content)}</div>
-                    ${commentMediaHtml}
-                    <div class="comment-date">${formatDate(c.createdAt)}</div>
-                  </div>
-                `;
-              }).join('') || '<p style="color: #999; text-align: center; padding: 20px;">첫 댓글을 작성해보세요!</p>'}
+              ${post.comments.map(c => `
+                <div class="comment-item">
+                  <button class="comment-delete-btn" onclick="deleteComment(${post.id}, ${c.id}, event)">삭제</button>
+                  <div class="comment-author">${escapeHtml(c.author)}</div>
+                  <div class="comment-content">${escapeHtml(c.content)}</div>
+                  <div class="comment-date">${formatDate(c.createdAt)}</div>
+                </div>
+              `).join('') || '<p style="color: #999; text-align: center; padding: 20px;">첫 댓글을 작성해보세요!</p>'}
             </div>
             <div style="margin-top: 20px;">
               <form onsubmit="submitComment(event, ${post.id})">
@@ -607,12 +513,6 @@
                 <div class="form-group">
                   <textarea id="commentContent" placeholder="댓글 입력" required maxlength="500" style="min-height: 80px;"></textarea>
                 </div>
-                <div class="form-group">
-                  <label class="image-upload-btn" for="commentFileInput">📷 파일 선택</label>
-                  <input type="file" id="commentFileInput" accept="image/*,video/*" style="display:none">
-                  <img id="commentImagePreview" class="image-preview">
-                  <video id="commentVideoPreview" class="image-preview" controls></video>
-                </div>
                 <button type="submit" class="submit-btn">댓글 작성</button>
               </form>
             </div>
@@ -621,70 +521,13 @@
         
         document.getElementById('postDetail').innerHTML = detailHtml;
         document.getElementById('detailModal').style.display = 'flex';
-        
-        setupCommentFileUpload();
       } catch (error) {
         alert('게시글을 불러올 수 없습니다');
       }
     }
 
-    let commentFileUrl = null;
-    let commentFileType = null;
-
-    function setupCommentFileUpload() {
-      const fileInput = document.getElementById('commentFileInput');
-      if (!fileInput) return;
-      
-      fileInput.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        
-        if (file.size > 10 * 1024 * 1024) {
-          alert('파일 크기는 10MB 이하만 가능합니다.');
-          e.target.value = '';
-          return;
-        }
-        
-        const formData = new FormData();
-        formData.append('file', file);
-        
-        try {
-          const response = await fetch('/api/upload', {
-            method: 'POST',
-            body: formData
-          });
-          
-          const result = await response.json();
-          
-          if (result.success) {
-            commentFileUrl = result.url;
-            commentFileType = result.type;
-            
-            const imgPreview = document.getElementById('commentImagePreview');
-            const videoPreview = document.getElementById('commentVideoPreview');
-            
-            if (result.type === 'video') {
-              videoPreview.src = result.url;
-              videoPreview.style.display = 'block';
-              imgPreview.style.display = 'none';
-            } else {
-              imgPreview.src = result.url;
-              imgPreview.style.display = 'block';
-              videoPreview.style.display = 'none';
-            }
-          } else {
-            alert(result.error || '업로드 실패');
-          }
-        } catch (error) {
-          alert('업로드 중 오류 발생: ' + error.message);
-        }
-      });
-    }
-
     function closeDetailModal() {
       document.getElementById('detailModal').style.display = 'none';
-      commentFileUrl = null;
-      commentFileType = null;
     }
 
     async function likePost(id) {
@@ -768,51 +611,22 @@
         const response = await fetch(`/api/posts/${postId}/comments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            author, 
-            password, 
-            content,
-            imageUrl: commentFileUrl,
-            imageType: commentFileType
-          })
+          body: JSON.stringify({ author, password, content })
         });
         
         const result = await response.json();
         
         if (result.success) {
-          commentFileUrl = null;
-          commentFileType = null;
           viewPost(postId);
+          document.getElementById('commentAuthor').value = '';
+          document.getElementById('commentPassword').value = '';
+          document.getElementById('commentContent').value = '';
         } else {
           alert(result.error || '댓글 작성 실패');
         }
       } catch (error) {
         alert('댓글 작성 실패');
       }
-    }
-
-    function showImageModal(url, type) {
-      const content = document.getElementById('imageModalContent');
-      content.innerHTML = '';
-      
-      if (type === 'video') {
-        const video = document.createElement('video');
-        video.src = url;
-        video.controls = true;
-        video.autoplay = true;
-        content.appendChild(video);
-      } else {
-        const img = document.createElement('img');
-        img.src = url;
-        content.appendChild(img);
-      }
-      
-      document.getElementById('imageModal').style.display = 'flex';
-    }
-
-    function closeImageModal() {
-      document.getElementById('imageModal').style.display = 'none';
-      document.getElementById('imageModalContent').innerHTML = '';
     }
 
     function escapeHtml(text) {
@@ -822,4 +636,19 @@
     }
 
     function formatDate(timestamp) {
-      const date =
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diff = now - date;
+      
+      if (diff < 60000) return '방금 전';
+      if (diff < 3600000) return `${Math.floor(diff / 60000)}분 전`;
+      if (diff < 86400000) return `${Math.floor(diff / 3600000)}시간 전`;
+      if (diff < 604800000) return `${Math.floor(diff / 86400000)}일 전`;
+      
+      return date.toLocaleDateString('ko-KR');
+    }
+
+    loadPosts();
+  </script>
+</body>
+</html>
